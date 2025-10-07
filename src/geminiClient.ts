@@ -1,11 +1,11 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, createUserContent, createPartFromUri } from "@google/genai";
 import type { AppConfig } from "./config.js";
 import {
   AnalyzeLocalVideoInput,
   AnalyzeRemoteVideoInput,
   resolvePrompt,
 } from "./types.js";
-import { readFileAsBase64 } from "./utils/file.js";
+import { guessMimeTypeFromPath } from "./utils/file.js";
 
 export class GeminiVideoClient {
   private readonly ai: GoogleGenAI;
@@ -18,32 +18,50 @@ export class GeminiVideoClient {
     this.maxInlineFileBytes = config.maxInlineFileBytes;
   }
 
-  async analyzeLocalVideo(input: AnalyzeLocalVideoInput): Promise<string> {
-    const { base64Data } = await readFileAsBase64(
-      input.filePath,
-      this.maxInlineFileBytes,
-    );
 
+    async analyzeLocalVideo(input: AnalyzeLocalVideoInput): Promise<string>  {
     const prompt = resolvePrompt(input.prompt);
     const model = pickModel(input.model, this.defaultModel);
-    const mimeType = input.mimeType ?? "video/mp4";
+    const mimeType = input.mimeType ?? guessMimeTypeFromPath(input.filePath) ?? "application/octet-stream";
 
-    const response = await this.ai.models.generateContent({
-      model,
-      contents: [
-        {
-          inlineData: {
-            mimeType,
-            data: base64Data,
-          },
-        },
-        {
-          text: prompt,
-        },
-      ],
+    // Upload the local file to get a URI, which supports larger files than base64 inline uploads
+    const uploaded = await this.ai.files.upload({
+      file: input.filePath,
+      config: { mimeType },
     });
 
-    return extractText(response);
+    // Validate the upload result to ensure we can proceed
+    if (uploaded.uri == null || uploaded.mimeType == null) {
+      // Attempt to clean up the uploaded file if possible, then throw
+      try {
+        if (uploaded?.name) {
+          await this.ai.files.delete({ name: uploaded.name });
+        }
+      } catch (error) {
+        console.error("Failed to delete uploaded file:", error);
+      }
+      throw new Error("Upload failed: missing file URI or MIME type");
+    }
+
+    try {
+      const response = await this.ai.models.generateContent({
+        model,
+        contents: createUserContent([
+          createPartFromUri(uploaded.uri, uploaded.mimeType),
+          prompt,
+        ]),
+      });
+      return extractText(response);
+    } finally {
+      // Ensure the uploaded file is deleted after processing
+      try {
+        if (uploaded?.name) {
+          await this.ai.files.delete({ name: uploaded.name });
+        }
+      } catch (error) {
+        console.error("Failed to delete uploaded file:", error);
+      }
+    }
   }
 
   async analyzeRemoteVideo(input: AnalyzeRemoteVideoInput): Promise<string> {
@@ -52,14 +70,10 @@ export class GeminiVideoClient {
 
     const response = await this.ai.models.generateContent({
       model,
-      contents: [
-        { text: prompt },
-        {
-          fileData: {
-            fileUri: input.videoUrl,
-          },
-        },
-      ],
+      contents: createUserContent([
+        createPartFromUri(input.videoUrl, "video/mp4"),
+        prompt,
+      ]),
     });
 
     return extractText(response);

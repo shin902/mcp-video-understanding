@@ -52,3 +52,33 @@ export async function readFileAsBase64(
     base64Data: buffer.toString("base64"),
   };
 }
+
+// Return a best-effort MIME type based on file extension. Not exhaustive, but covers common cases.
+export function guessMimeTypeFromPath(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case ".mp4":
+      return "video/mp4";
+    case ".mov":
+      return "video/quicktime";
+    case ".webm":
+      return "video/webm";
+    case ".mkv":
+      return "video/x-matroska";
+    case ".avi":
+      return "video/x-msvideo";
+    case ".mpg":
+    case ".mpeg":
+      return "video/mpeg";
+    case ".m4v":
+      return "video/x-m4v";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".wav":
+      return "audio/wav";
+    case ".m4a":
+      return "audio/mp4";
+    default:
+      return null;
+  }
+}
