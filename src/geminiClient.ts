@@ -1,4 +1,9 @@
-import { GoogleGenAI, createUserContent, createPartFromUri } from "@google/genai";
+import {
+  GoogleGenAI,
+  createUserContent,
+  createPartFromUri,
+  FileState,
+} from "@google/genai";
 import type { AppConfig } from "./config.js";
 import {
   AnalyzeLocalVideoInput,
@@ -7,19 +12,30 @@ import {
 } from "./types.js";
 import { guessMimeTypeFromPath } from "./utils/file.js";
 
+export interface GeminiVideoClientOptions {
+  aiClient?: GoogleGenAI;
+  fileActivationTimeoutMs?: number;
+  fileActivationPollIntervalMs?: number;
+}
+
 export class GeminiVideoClient {
   private readonly ai: GoogleGenAI;
   private readonly defaultModel: string;
   private readonly maxInlineFileBytes: number;
+  private readonly fileActivationTimeoutMs: number;
+  private readonly fileActivationPollIntervalMs: number;
 
-  constructor(config: AppConfig) {
-    this.ai = new GoogleGenAI({ apiKey: config.apiKey });
+  constructor(config: AppConfig, options: GeminiVideoClientOptions = {}) {
+    this.ai = options.aiClient ?? new GoogleGenAI({ apiKey: config.apiKey });
     this.defaultModel = config.model;
     this.maxInlineFileBytes = config.maxInlineFileBytes;
+    this.fileActivationTimeoutMs =
+      options.fileActivationTimeoutMs ?? 60_000;
+    this.fileActivationPollIntervalMs =
+      options.fileActivationPollIntervalMs ?? 1_000;
   }
 
-
-    async analyzeLocalVideo(input: AnalyzeLocalVideoInput): Promise<string>  {
+  async analyzeLocalVideo(input: AnalyzeLocalVideoInput): Promise<string> {
     const prompt = resolvePrompt(input.prompt);
     const model = pickModel(input.model, this.defaultModel);
     const mimeType = input.mimeType ?? guessMimeTypeFromPath(input.filePath) ?? "application/octet-stream";
@@ -30,24 +46,22 @@ export class GeminiVideoClient {
       config: { mimeType },
     });
 
-    // Validate the upload result to ensure we can proceed
-    if (uploaded.uri == null || uploaded.mimeType == null) {
-      // Attempt to clean up the uploaded file if possible, then throw
-      try {
-        if (uploaded?.name) {
-          await this.ai.files.delete({ name: uploaded.name });
-        }
-      } catch (error) {
-        console.error("Failed to delete uploaded file:", error);
-      }
-      throw new Error("Upload failed: missing file URI or MIME type");
+    if (!uploaded?.name) {
+      throw new Error("Upload failed: missing file name to poll status");
     }
 
+    let activeFile: GeminiFile | null = null;
     try {
+      activeFile = await this.waitForFileActivation(uploaded.name);
+
+      if (activeFile.uri == null || activeFile.mimeType == null) {
+        throw new Error("Upload failed: missing file URI or MIME type after activation");
+      }
+
       const response = await this.ai.models.generateContent({
         model,
         contents: createUserContent([
-          createPartFromUri(uploaded.uri, uploaded.mimeType),
+          createPartFromUri(activeFile.uri, activeFile.mimeType),
           prompt,
         ]),
       });
@@ -55,8 +69,9 @@ export class GeminiVideoClient {
     } finally {
       // Ensure the uploaded file is deleted after processing
       try {
-        if (uploaded?.name) {
-          await this.ai.files.delete({ name: uploaded.name });
+        const nameToDelete = activeFile?.name ?? uploaded.name;
+        if (nameToDelete) {
+          await this.ai.files.delete({ name: nameToDelete });
         }
       } catch (error) {
         console.error("Failed to delete uploaded file:", error);
@@ -78,6 +93,31 @@ export class GeminiVideoClient {
 
     return extractText(response);
   }
+
+  private async waitForFileActivation(fileName: string): Promise<GeminiFile> {
+    const deadline = Date.now() + this.fileActivationTimeoutMs;
+
+    while (Date.now() <= deadline) {
+      const file = await this.ai.files.get({ name: fileName });
+
+      if (file.state === FileState.ACTIVE) {
+        return file;
+      }
+
+      if (file.state === FileState.FAILED) {
+        const reason = file.error?.message ?? "unknown error";
+        throw new Error(
+          `Uploaded file ${fileName} failed to process: ${reason}`,
+        );
+      }
+
+      await delay(this.fileActivationPollIntervalMs);
+    }
+
+    throw new Error(
+      `Timed out waiting for uploaded file ${fileName} to become ACTIVE`,
+    );
+  }
 }
 
 function pickModel(candidate: string | undefined, fallback: string): string {
@@ -86,6 +126,15 @@ function pickModel(candidate: string | undefined, fallback: string): string {
   }
   return fallback;
 }
+
+async function delay(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type GeminiFile = Awaited<ReturnType<GoogleGenAI["files"]["get"]>>;
 
 type GenerateContentReturn = Awaited<
   ReturnType<GoogleGenAI["models"]["generateContent"]>
