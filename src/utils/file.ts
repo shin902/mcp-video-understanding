@@ -15,7 +15,7 @@ export async function ensureFileReadable(
   try {
     fileStat = await stat(resolvedPath);
   } catch (error) {
-    throw new Error(`Local video file not found: ${resolvedPath}`);
+    throw new Error(`Local video file not found: ${resolvedPath}\n${error}`);
   }
 
   if (!fileStat.isFile()) {
