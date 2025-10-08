@@ -11,6 +11,7 @@ function createMockAi({
   fileName = "files/mock",
   uploadMimeType = "video/mp4",
   uploadUri = null,
+  onGenerate,
 } = {}) {
   const uploadCalls = [];
   const getCalls = [];
@@ -51,6 +52,12 @@ function createMockAi({
   const models = {
     generateContent: async (request) => {
       generateRequests.push(request);
+      if (onGenerate) {
+        return await onGenerate(request, generateRequests.length);
+      }
+      if (generateResponse instanceof Error) {
+        throw generateResponse;
+      }
       return generateResponse;
     },
   };
@@ -129,4 +136,115 @@ test("analyzeLocalVideo がFAILED stateを検知したらエラーを投げる",
 
   assert.equal(mockAi.generateRequests.length, 0, "生成APIは呼び出されない");
   assert.deepEqual(mockAi.deleteCalls, ["files/mock"], "失敗時もアップロードを削除する");
+});
+
+test("analyzeRemoteVideo が MIME type を URL から推測して送信する", async () => {
+  let capturedRequest;
+  const mockAi = createMockAi({
+    onGenerate: async (request) => {
+      capturedRequest = request;
+      return { text: "remote" };
+    },
+  });
+
+  const client = new GeminiVideoClient(
+    {
+      apiKey: "dummy",
+      model: "gemini-2.5-flash",
+      maxInlineFileBytes: 10,
+    },
+    {
+      aiClient: mockAi,
+      sleepFn: async () => {},
+    },
+  );
+
+  const result = await client.analyzeRemoteVideo({
+    videoUrl: "https://example.com/sample.webm",
+    prompt: "概要をください",
+  });
+
+  assert.equal(result, "remote");
+  assert.equal(mockAi.generateRequests.length, 1);
+
+  const content = Array.isArray(capturedRequest.contents)
+    ? capturedRequest.contents[0]
+    : capturedRequest.contents;
+  const filePart = content?.parts?.find((part) => part?.fileData);
+  assert.ok(filePart, "fileData part が含まれている");
+  assert.equal(filePart.fileData.mimeType, "video/webm");
+});
+
+test("analyzeRemoteVideo は内部エラー時にフォールバックモデルを試す", async () => {
+  let callCount = 0;
+  const mockAi = createMockAi({
+    onGenerate: async (request) => {
+      callCount += 1;
+      if (callCount === 1) {
+        const error = new Error("internal");
+        error.status = 500;
+        throw error;
+      }
+      return { text: "fallback ok" };
+    },
+  });
+
+  const client = new GeminiVideoClient(
+    {
+      apiKey: "dummy",
+      model: "gemini-2.5-flash",
+      maxInlineFileBytes: 10,
+    },
+    {
+      aiClient: mockAi,
+      sleepFn: async () => {},
+      remoteRetry: {
+        maxAttempts: 1,
+        fallbackModels: ["gemini-2.0-flash-exp"],
+      },
+    },
+  );
+
+  const result = await client.analyzeRemoteVideo({
+    videoUrl: "https://example.com/movie.mp4",
+    prompt: "概要をください",
+  });
+
+  assert.equal(result, "fallback ok");
+  assert.equal(mockAi.generateRequests.length, 2);
+  assert.equal(mockAi.generateRequests[0].model, "gemini-2.5-flash");
+  assert.equal(mockAi.generateRequests[1].model, "gemini-2.0-flash-exp");
+});
+
+test("analyzeRemoteVideo が YouTube URL の500エラーで Vertex 利用を促す", async () => {
+  const mockAi = createMockAi({
+    onGenerate: async () => {
+      const error = new Error("internal");
+      error.status = 500;
+      throw error;
+    },
+  });
+
+  const client = new GeminiVideoClient(
+    {
+      apiKey: "dummy",
+      model: "gemini-2.5-flash",
+      maxInlineFileBytes: 10,
+    },
+    {
+      aiClient: mockAi,
+      sleepFn: async () => {},
+      remoteRetry: {
+        maxAttempts: 1,
+      },
+    },
+  );
+
+  await assert.rejects(
+    client.analyzeRemoteVideo({
+      videoUrl: "https://www.youtube.com/watch?v=abcd",
+      prompt: "概要をください",
+    }),
+    /Vertex AI を利用するか/,
+  );
 });
