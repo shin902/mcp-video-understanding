@@ -97,6 +97,7 @@ Thumbs.db
 
 # Test files
 test_api/test.mp4
+test_api/gemini_remote_video_url.txt
 
 
 
