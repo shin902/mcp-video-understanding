@@ -182,7 +182,7 @@ test("analyzeRemoteVideo は内部エラー時にフォールバックモデル�
       callCount += 1;
       if (callCount === 1) {
         const error = new Error("internal");
-        error.status = 500;
+        error.status = "INTERNAL";
         throw error;
       }
       return { text: "fallback ok" };
@@ -216,11 +216,50 @@ test("analyzeRemoteVideo は内部エラー時にフォールバックモデル�
   assert.equal(mockAi.generateRequests[1].model, "gemini-2.0-flash-exp");
 });
 
+test("analyzeRemoteVideo は status が '500' の文字列でも再試行する", async () => {
+  let callCount = 0;
+  const mockAi = createMockAi({
+    onGenerate: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        const error = new Error("internal 500");
+        error.status = "500";
+        throw error;
+      }
+      return { text: "string code ok" };
+    },
+  });
+
+  const client = new GeminiVideoClient(
+    {
+      apiKey: "dummy",
+      model: "gemini-2.5-flash",
+      maxInlineFileBytes: 10,
+    },
+    {
+      aiClient: mockAi,
+      sleepFn: async () => {},
+      remoteRetry: {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+      },
+    },
+  );
+
+  const result = await client.analyzeRemoteVideo({
+    videoUrl: "https://example.com/movie.mp4",
+    prompt: "概要をください",
+  });
+
+  assert.equal(result, "string code ok");
+  assert.equal(callCount, 2);
+});
+
 test("analyzeRemoteVideo が YouTube URL の500エラーで Vertex 利用を促す", async () => {
   const mockAi = createMockAi({
     onGenerate: async () => {
       const error = new Error("internal");
-      error.status = 500;
+      error.status = "INTERNAL";
       throw error;
     },
   });

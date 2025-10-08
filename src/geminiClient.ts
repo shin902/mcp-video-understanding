@@ -270,9 +270,26 @@ function isInternalError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
-  const status = (error as { status?: unknown }).status;
+  const candidate = error as { status?: unknown; code?: unknown };
+  const status = candidate.status;
   if (typeof status === "number") {
-    return status === 500;
+    if (status === 500) {
+      return true;
+    }
+  } else if (typeof status === "string") {
+    const normalized = status.trim().toUpperCase();
+    if (normalized === "500") {
+      return true;
+    }
+    if (normalized === "INTERNAL" || normalized === "INTERNAL_ERROR") {
+      return true;
+    }
+  }
+  const code = candidate.code;
+  if (typeof code === "number") {
+    if (code === 500 || code === 13) {
+      return true;
+    }
   }
   return false;
 }
