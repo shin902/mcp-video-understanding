@@ -16,6 +16,8 @@ export interface GeminiVideoClientOptions {
   aiClient?: GoogleGenAI;
   fileActivationTimeoutMs?: number;
   fileActivationPollIntervalMs?: number;
+  remoteRetry?: Partial<RemoteVideoRetryOptions>;
+  sleepFn?: (ms: number) => Promise<void>;
 }
 
 export class GeminiVideoClient {
@@ -24,6 +26,8 @@ export class GeminiVideoClient {
   private readonly maxInlineFileBytes: number;
   private readonly fileActivationTimeoutMs: number;
   private readonly fileActivationPollIntervalMs: number;
+  private readonly remoteRetry: RemoteVideoRetryOptions;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(config: AppConfig, options: GeminiVideoClientOptions = {}) {
     this.ai = options.aiClient ?? new GoogleGenAI({ apiKey: config.apiKey });
@@ -33,6 +37,15 @@ export class GeminiVideoClient {
       options.fileActivationTimeoutMs ?? 60_000;
     this.fileActivationPollIntervalMs =
       options.fileActivationPollIntervalMs ?? 1_000;
+    this.remoteRetry = {
+      maxAttempts: options.remoteRetry?.maxAttempts ?? 2,
+      initialDelayMs: options.remoteRetry?.initialDelayMs ?? 1_500,
+      backoffMultiplier: options.remoteRetry?.backoffMultiplier ?? 2,
+      fallbackModels: options.remoteRetry?.fallbackModels ?? [
+        "gemini-2.0-flash-exp",
+      ],
+    };
+    this.sleep = options.sleepFn ?? delay;
   }
 
   async analyzeLocalVideo(input: AnalyzeLocalVideoInput): Promise<string> {
@@ -83,15 +96,70 @@ export class GeminiVideoClient {
     const prompt = resolvePrompt(input.prompt);
     const model = pickModel(input.model, this.defaultModel);
 
-    const response = await this.ai.models.generateContent({
-      model,
-      contents: createUserContent([
-        createPartFromUri(input.videoUrl, "video/mp4"),
-        prompt,
-      ]),
-    });
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(input.videoUrl);
+    } catch (error) {
+      throw new Error(
+        `Invalid videoUrl provided to analyzeRemoteVideo: ${input.videoUrl}`,
+        { cause: error instanceof Error ? error : undefined },
+      );
+    }
 
-    return extractText(response);
+    const mimeTypeFromUrl = guessMimeTypeFromPath(parsedUrl.pathname);
+    const mimeType = mimeTypeFromUrl ?? "application/octet-stream";
+    const requestPart = createPartFromUri(parsedUrl.toString(), mimeType);
+    const hostsRequiringVertex = new Set([
+      "youtube.com",
+      "www.youtube.com",
+      "m.youtube.com",
+      "youtu.be",
+    ]);
+    const isYoutubeUrl = hostsRequiringVertex.has(parsedUrl.hostname);
+
+    const modelsToTry = dedupeModels([
+      model,
+      ...this.remoteRetry.fallbackModels,
+    ]);
+
+    let lastError: unknown = null;
+
+    for (const modelCandidate of modelsToTry) {
+      let delayMs = this.remoteRetry.initialDelayMs;
+
+      for (let attempt = 1; attempt <= this.remoteRetry.maxAttempts; attempt++) {
+        try {
+          const response = await this.ai.models.generateContent({
+            model: modelCandidate,
+            contents: createUserContent([requestPart, prompt]),
+          });
+          return extractText(response);
+        } catch (error) {
+          lastError = error;
+
+          if (isYoutubeUrl && isInternalError(error)) {
+            throw new Error(
+              "Gemini Developer API は YouTube のリモート動画解析を安定して扱えません。Vertex AI を利用するか、動画をダウンロードしてから analyzeLocalVideo を使ってください。",
+              { cause: error instanceof Error ? error : undefined },
+            );
+          }
+
+          const shouldRetry =
+            attempt < this.remoteRetry.maxAttempts && isInternalError(error);
+          if (!shouldRetry) {
+            break;
+          }
+
+          await this.sleep(Math.max(delayMs, 0));
+          delayMs *= this.remoteRetry.backoffMultiplier;
+        }
+      }
+    }
+
+    throw new Error(
+      "Gemini remote video analysis failed after retrying different models. 最新の回避策については https://ai.google.dev/gemini-api/docs/troubleshooting を確認してください。",
+      { cause: lastError instanceof Error ? lastError : undefined },
+    );
   }
 
   private async waitForFileActivation(fileName: string): Promise<GeminiFile> {
@@ -139,6 +207,13 @@ type GeminiFile = Awaited<ReturnType<GoogleGenAI["files"]["get"]>>;
 type GenerateContentReturn = Awaited<
   ReturnType<GoogleGenAI["models"]["generateContent"]>
 >;
+
+interface RemoteVideoRetryOptions {
+  maxAttempts: number;
+  initialDelayMs: number;
+  backoffMultiplier: number;
+  fallbackModels: string[];
+}
 
 function extractText(result: GenerateContentReturn): string {
   if (!result) {
@@ -189,4 +264,46 @@ function extractText(result: GenerateContentReturn): string {
   }
 
   return "";
+}
+
+function isInternalError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const candidate = error as { status?: unknown; code?: unknown };
+  const status = candidate.status;
+  if (typeof status === "number") {
+    if (status === 500) {
+      return true;
+    }
+  } else if (typeof status === "string") {
+    const normalized = status.trim().toUpperCase();
+    if (normalized === "500") {
+      return true;
+    }
+    if (normalized === "INTERNAL" || normalized === "INTERNAL_ERROR") {
+      return true;
+    }
+  }
+  const code = candidate.code;
+  if (typeof code === "number") {
+    if (code === 500 || code === 13) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function dedupeModels(models: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
 }

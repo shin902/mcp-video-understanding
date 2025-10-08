@@ -53,7 +53,7 @@ async function main() {
 
   const client = new GeminiVideoClient({
     apiKey,
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-2.5-flash",
     maxInlineFileBytes: 10 * 1024 * 1024,
   });
 
@@ -64,7 +64,20 @@ async function main() {
     });
     console.log(result);
   } catch (err) {
-    console.error("Gemini remote video check failed:", err);
+    if (err instanceof Error) {
+      console.error("Gemini remote video check failed:", err.message);
+      if (err.cause instanceof Error && "status" in err.cause) {
+        console.error("  - 原因 status:", err.cause.status);
+        if (err.cause.message) {
+          console.error("  - 原因 message:", err.cause.message);
+        }
+      }
+      console.error(
+        "最新の回避策: https://ai.google.dev/gemini-api/docs/troubleshooting と docs/GEMINI_500_ERROR_REPORT.md を参照してください。",
+      );
+    } else {
+      console.error("Gemini remote video check failed:", err);
+    }
     process.exitCode = 1;
   }
 }
