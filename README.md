@@ -36,6 +36,8 @@ npm run build
 
 ### API キーの設定
 
+#### macOS / Linux
+
 `~/.zshrc` または `~/.bashrc` にAPIキーを設定してください：
 
 ```bash
@@ -44,7 +46,51 @@ export GOOGLE_API_KEY="your_api_key_here"
 
 サーバーは自動的に `~/.zshrc` からキーを読み取ります。
 
-### MCP クライアントの設定
+#### Windows
+
+**コマンドプロンプト (cmd) の場合：**
+
+一時的な設定（現在のセッションのみ有効）：
+```cmd
+set GOOGLE_API_KEY=your_api_key_here
+```
+
+永続的な設定：
+```cmd
+setx GOOGLE_API_KEY "your_api_key_here"
+```
+
+**PowerShell の場合：**
+
+一時的な設定（現在のセッションのみ有効）：
+```powershell
+$env:GOOGLE_API_KEY="your_api_key_here"
+```
+
+永続的な設定：
+```powershell
+[System.Environment]::SetEnvironmentVariable('GOOGLE_API_KEY', 'your_api_key_here', 'User')
+```
+
+> **注意**: 永続的な設定後は、新しいターミナルウィンドウを開いて設定を反映してください。
+
+### MCP クライアントの設定（Claude Desktopの場合）
+
+#### 設定ファイルの場所
+
+**macOS:**
+```
+~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+**Windows:**
+```
+%APPDATA%\Claude\claude_desktop_config.json
+```
+
+#### 設定内容
+
+**基本設定 (macOS / WSL含むLinux):**
 
 Claude Desktop などのMCPクライアントで使用する場合、設定ファイルに以下を追加：
 
@@ -62,7 +108,26 @@ Claude Desktop などのMCPクライアントで使用する場合、設定フ�
 }
 ```
 
-**セキュリティ重視の設定**
+**Windows (cmd経由で実行する場合):**
+
+```json
+{
+  "mcpServers": {
+    "gemini-video": {
+      "command": "cmd",
+      "args": ["/c", "npx", "mcp-video-understanding"],
+      "env": {
+        "GOOGLE_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+> **注意**: `/c` オプションは「コマンドを実行して終了」を意味します。
+
+**セキュリティ重視の設定:**
+
 APIキーを設定ファイルに直接書きたくない場合は、`env` を空にしてシェル環境変数を使用：
 
 ```json
@@ -77,10 +142,24 @@ APIキーを設定ファイルに直接書きたくない場合は、`env` を�
 }
 ```
 
-> **注意**: 環境によっては `npx` のフルパスが必要です。`which npx` で確認してください。
-> - 一般的: `/usr/local/bin/npx`
-> - Apple Silicon (Homebrew): `/opt/homebrew/bin/npx`
-> - mise使用時: `/Users/your-username/.local/share/mise/shims/npx`
+#### npx のパス確認方法
+
+**macOS / Linux:**
+```bash
+which npx
+```
+- 一般的: `/usr/local/bin/npx`
+- Apple Silicon (Homebrew): `/opt/homebrew/bin/npx`
+- mise使用時: `/Users/your-username/.local/share/mise/shims/npx`
+
+**Windows:**
+```cmd
+where.exe npx
+```
+- 一般的: `C:\Program Files\nodejs\npx.cmd`
+- npm グローバルインストール: `C:\Users\your-username\AppData\Roaming\npm\npx.cmd`
+
+> **注意**: 環境によっては `npx` のフルパスが必要です。上記のコマンドで確認してください。
 
 ## 使用方法
 
