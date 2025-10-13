@@ -2,6 +2,8 @@
 
 > Gemini APIを活用したビデオ理解機能を提供するModel Context Protocol (MCP) サーバー
 
+[![npm version](https://badge.fury.io/js/mcp-video-understanding.svg)](https://www.npmjs.com/package/mcp-video-understanding)
+
 ## 概要
 
 このプロジェクトは、Gemini APIのマルチモーダル機能を活用し、動画の理解・分析を行うMCPサーバーです。ローカルまたはリモートの動画を分析し、内容を詳細に要約できます。
