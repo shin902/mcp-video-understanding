@@ -33,7 +33,7 @@ export function createServer(config: AppConfig): Server {
       {
         name: "analyzeLocalVideo",
         description:
-          "ローカルの動画ファイル (20MB 以下) を Gemini で要約します。",
+          "ローカルの動画ファイルを Gemini で要約します。",
         inputSchema: ANALYZE_LOCAL_VIDEO_INPUT_SCHEMA,
       },
       {
