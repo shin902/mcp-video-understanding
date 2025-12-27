@@ -1,6 +1,6 @@
 export const DEFAULT_PROMPT =
   "最初にこの記事全体を要約し全体像を掴んだ後、大きなセクションごとに細かく要約を行ってください。 その次に小さなセクションごとに更に詳細な要約を行ってください。";
-export const DEFAULT_MODEL_NAME = "gemini-2.5-flash";
+export const DEFAULT_MODEL_NAME = "gemini-2.0-flash-exp";
 export const MAX_INLINE_FILE_BYTES = 20 * 1024 * 1024; // legacy inline upload limit (no longer used when using Files API)
 
 export type ToolName = "analyzeLocalVideo" | "analyzeRemoteVideo";

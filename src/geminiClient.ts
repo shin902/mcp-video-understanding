@@ -42,8 +42,7 @@ export class GeminiVideoClient {
       initialDelayMs: options.remoteRetry?.initialDelayMs ?? 1_500,
       backoffMultiplier: options.remoteRetry?.backoffMultiplier ?? 2,
       fallbackModels: options.remoteRetry?.fallbackModels ?? [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro"
+        "gemini-2.0-flash-exp",
       ],
     };
     this.sleep = options.sleepFn ?? delay;
