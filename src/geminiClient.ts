@@ -42,7 +42,8 @@ export class GeminiVideoClient {
       initialDelayMs: options.remoteRetry?.initialDelayMs ?? 1_500,
       backoffMultiplier: options.remoteRetry?.backoffMultiplier ?? 2,
       fallbackModels: options.remoteRetry?.fallbackModels ?? [
-        "gemini-2.0-flash-exp",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro"
       ],
     };
     this.sleep = options.sleepFn ?? delay;
@@ -156,8 +157,11 @@ export class GeminiVideoClient {
       }
     }
 
+    const errorDetails = lastError instanceof Error
+      ? `${lastError.message} (${JSON.stringify(lastError, Object.getOwnPropertyNames(lastError))})`
+      : String(lastError);
     throw new Error(
-      "Gemini remote video analysis failed after retrying different models. 最新の回避策については https://ai.google.dev/gemini-api/docs/troubleshooting を確認してください。",
+      `Gemini remote video analysis failed after retrying different models (${modelsToTry.join(", ")}). Error: ${errorDetails}. 最新の回避策については https://ai.google.dev/gemini-api/docs/troubleshooting を確認してください。`,
       { cause: lastError instanceof Error ? lastError : undefined },
     );
   }
